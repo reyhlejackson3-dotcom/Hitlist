@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Hitlist</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div>
+      <h1>My Hitlist</h1>
+      <p class="subtitle">Mark my words.</p>
+    </div>
+    <button class="btn-red" onclick="openModal()">+ Add</button>
+  </header>
+
+  <div id="podiums-section" style="display:none;">
+    <div class="podiums-grid">
+      <div class="podium-card green-card">
+        <p class="podium-label green-label">Most motivating</p>
+        <div id="good-podium" class="podium-row"></div>
+      </div>
+      <div class="podium-card red-card">
+        <p class="podium-label red-label">Most wanted</p>
+        <div id="bad-podium" class="podium-row"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="profiles-list"></div>
+  <div id="empty-state" style="display:none;" class="empty-state">
+    <p class="skull">☠</p>
+    <p class="empty-title">Hitlist is empty.</p>
+    <p class="empty-sub">Add someone to get started.</p>
+  </div>
+</div>
+
+<div id="modal-overlay" class="modal-overlay" style="display:none;" onclick="closeModalOutside(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Add to hitlist</h2>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <label class="photo-upload" for="photo-input">
+        <input type="file" id="photo-input" accept="image/*" onchange="previewPhoto(event)" />
+        <div id="photo-preview" class="photo-circle">+</div>
+        <span class="upload-hint">Upload photo (optional)</span>
+      </label>
+      <div class="field">
+        <label class="field-label">Name</label>
+        <input type="text" id="input-name" class="input" placeholder="Full name" />
+      </div>
+      <div class="field">
+        <label class="field-label">Who are they</label>
+        <textarea id="input-desc" class="input textarea" placeholder="Relationship, context, why they're on here..." rows="3"></textarea>
+      </div>
+      <p id="modal-error" class="error-text" style="display:none;"></p>
+      <button class="btn-red full-width" id="add-btn" onclick="addProfile()">Add to hitlist</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://sijewknvckgknutyndsr.supabase.co'
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNpamV3a252Y2tna251dHluZHNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3MzkxMjUsImV4cCI6MjA5NzMxNTEyNX0.VIq7MM41p7xO27gM9IzNlV8P8oIcC7NZ99_P5fbMNi0'
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+
+  let selectedPhotoFile = null
+
+  function previewPhoto(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    selectedPhotoFile = file
+    const preview = document.getElementById('photo-preview')
+    const url = URL.createObjectURL(file)
+    preview.style.backgroundImage = `url(${url})`
+    preview.style.backgroundSize = 'cover'
+    preview.style.backgroundPosition = 'center'
+    preview.textContent = ''
+  }
+
+  function openModal() {
+    document.getElementById('modal-overlay').style.display = 'flex'
+  }
+
+  function closeModal() {
+    document.getElementById('modal-overlay').style.display = 'none'
+    document.getElementById('input-name').value = ''
+    document.getElementById('input-desc').value = ''
+    document.getElementById('photo-preview').style.backgroundImage = ''
+    document.getElementById('photo-preview').textContent = '+'
+    document.getElementById('modal-error').style.display = 'none'
+    selectedPhotoFile = null
+  }
+
+  function closeModalOutside(e) {
+    if (e.target === document.getElementById('modal-overlay')) closeModal()
+  }
+
+  function starsHTML(value, size = 13) {
+    let html = ''
+    for (let i = 1; i <= 6; i++) {
+      const filled = i <= value
+      const color = !filled ? '#2a2a2a' : (i <= 3 ? '#22c55e' : '#e02020')
+      const margin = i === 4 ? 'margin-left:5px;' : ''
+      html += `<span style="font-size:${size}px;color:${color};${margin}">★</span>`
+    }
+    return html
+  }
+
+  function avatarHTML(photoUrl, name, size = 48) {
+    const initials = name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '?'
+    if (photoUrl) {
+      return `<div class="avatar" style="width:${size}px;height:${size}px;background-image:url(${photoUrl});background-size:cover;background-position:center;"></div>`
+    }
+    return `<div class="avatar" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.32)}px;">${initials}</div>`
+  }
+
+  function starLabel(avg) {
+    if (avg <= 1) return { text: 'Pure motivation', color: '#22c55e' }
+    if (avg <= 2) return { text: 'Good energy', color: '#22c55e' }
+    if (avg <= 3) return { text: 'Slightly good', color: '#86efac' }
+    if (avg <= 4) return { text: 'Slightly bad', color: '#fca5a5' }
+    if (avg <= 5) return { text: 'Pissed off', color: '#e02020' }
+    return { text: 'Pure rage', color: '#e02020' }
+  }
+
+  function renderPodium(containerId, profiles, order) {
+    const sorted = [...profiles].sort((a, b) => order === 'asc' ? a.avgStars - b.avgStars : b.avgStars - a.avgStars).slice(0, 3)
+    if (sorted.length === 0) { document.getElementById(containerId).innerHTML = '<p style="color:#444;font-size:13px;text-align:center;padding:20px 0;">Not enough data</p>'; return }
+
+    const podiumOrder = sorted.length === 1 ? [sorted[0]] : sorted.length === 2 ? [sorted[1], sorted[0]] : [sorted[1], sorted[0], sorted[2]]
+    const heights = [90, 130, 70]
+    const labels = ['2nd', '1st', '3rd']
+    const sizes = [44, 60, 40]
+    const isGreen = order === 'asc'
+
+    let html = ''
+    podiumOrder.forEach((p, i) => {
+      const blockBg = isGreen ? (i === 1 ? '#0a1a0a' : '#0d130d') : (i === 1 ? '#1a0000' : '#130a0a')
+      const blockBorder = isGreen ? (i === 1 ? '#166534' : '#1a2a1a') : (i === 1 ? '#8b1a1a' : '#2a1a1a')
+      const labelColor = isGreen ? '#22c55e' : '#e02020'
+      html += `
+        <div class="podium-person" onclick="location.href='profile.html?id=${p.id}'">
+          ${avatarHTML(p.photo_url, p.name, sizes[i])}
+          <p class="podium-name">${p.name}</p>
+          <p style="font-size:11px;color:#555;margin-top:2px;">${p.avgStars.toFixed(1)}</p>
+          <div style="width:100%;height:${heights[i]}px;background:${blockBg};border:0.5px solid ${blockBorder};border-bottom:none;border-radius:6px 6px 0 0;display:flex;align-items:flex-start;justify-content:center;padding-top:8px;margin-top:8px;">
+            <span style="font-size:11px;color:${labelColor};font-weight:500;">${labels[i]}</span>
+          </div>
+        </div>`
+    })
+    document.getElementById(containerId).innerHTML = html
+  }
+
+  async function loadProfiles() {
+    const { data: profileData } = await sb.from('profiles').select('*').order('created_at', { ascending: false })
+    const { data: logData } = await sb.from('logs').select('profile_id, stars')
+
+    const profiles = (profileData || []).map(p => {
+      const pLogs = (logData || []).filter(l => l.profile_id === p.id)
+      const avgStars = pLogs.length ? pLogs.reduce((s, l) => s + l.stars, 0) / pLogs.length : 0
+      return { ...p, avgStars, logCount: pLogs.length }
+    })
+
+    if (profiles.length === 0) {
+      document.getElementById('empty-state').style.display = 'block'
+      document.getElementById('profiles-list').innerHTML = ''
+      document.getElementById('podiums-section').style.display = 'none'
+      return
+    }
+
+    document.getElementById('empty-state').style.display = 'none'
+
+    const withLogs = profiles.filter(p => p.logCount > 0)
+    if (withLogs.length > 0) {
+      document.getElementById('podiums-section').style.display = 'block'
+      renderPodium('good-podium', withLogs, 'asc')
+      renderPodium('bad-podium', withLogs, 'desc')
+    }
+
+    let html = ''
+    profiles.forEach(p => {
+      const label = starLabel(p.avgStars)
+      const avgColor = p.avgStars <= 3 ? '#22c55e' : '#e02020'
+      html += `
+        <div class="profile-row" onclick="location.href='profile.html?id=${p.id}'">
+          ${avatarHTML(p.photo_url, p.name, 48)}
+          <div class="profile-info">
+            <p class="profile-name">${p.name}</p>
+            ${p.description ? `<p class="profile-desc">${p.description}</p>` : ''}
+          </div>
+          <div class="profile-stars">
+            ${p.logCount > 0 ? `
+              <div>${starsHTML(Math.round(p.avgStars), 13)}</div>
+              <p style="font-size:11px;color:${avgColor};margin-top:3px;">${p.avgStars.toFixed(1)} · ${p.logCount} log${p.logCount !== 1 ? 's' : ''}</p>
+            ` : '<p style="font-size:11px;color:#333;">No logs yet</p>'}
+          </div>
+        </div>`
+    })
+    document.getElementById('profiles-list').innerHTML = html
+  }
+
+  async function addProfile() {
+    const name = document.getElementById('input-name').value.trim()
+    const desc = document.getElementById('input-desc').value.trim()
+    const errEl = document.getElementById('modal-error')
+    const btn = document.getElementById('add-btn')
+
+    if (!name) { errEl.textContent = 'Name is required.'; errEl.style.display = 'block'; return }
+
+    btn.textContent = 'Adding...'
+    btn.disabled = true
+    errEl.style.display = 'none'
+
+    let photo_url = null
+    if (selectedPhotoFile) {
+      const ext = selectedPhotoFile.name.split('.').pop()
+      const filename = `${Date.now()}.${ext}`
+      const { error: uploadErr } = await sb.storage.from('avatars').upload(filename, selectedPhotoFile, { upsert: true })
+      if (uploadErr) { errEl.textContent = 'Photo upload failed.'; errEl.style.display = 'block'; btn.textContent = 'Add to hitlist'; btn.disabled = false; return }
+      const { data: urlData } = sb.storage.from('avatars').getPublicUrl(filename)
+      photo_url = urlData.publicUrl
+    }
+
+    const { error } = await sb.from('profiles').insert({ name, description: desc, photo_url })
+    if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; btn.textContent = 'Add to hitlist'; btn.disabled = false; return }
+
+    btn.textContent = 'Add to hitlist'
+    btn.disabled = false
+    closeModal()
+    loadProfiles()
+  }
+
+  loadProfiles()
+</script>
+</body>
+</html>
