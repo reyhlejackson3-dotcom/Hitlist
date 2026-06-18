@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Profile — My Hitlist</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="container">
+  <div class="back-nav">
+    <button class="back-btn" onclick="location.href='index.html'">← Hitlist</button>
+  </div>
+
+  <div id="profile-header" class="profile-header-card" style="display:none;">
+    <div class="profile-header-inner">
+      <label class="avatar-upload-label" for="avatar-input" title="Update photo">
+        <input type="file" id="avatar-input" accept="image/*" onchange="uploadPhoto(event)" />
+        <div id="avatar-display"></div>
+        <div class="avatar-edit-badge">✎</div>
+      </label>
+      <div class="profile-header-info">
+        <h1 id="profile-name-display"></h1>
+        <p id="profile-desc-display" class="profile-desc-text"></p>
+        <div id="profile-avg-row" style="display:none;" class="avg-row"></div>
+      </div>
+      <button class="delete-profile-btn" onclick="confirmDeleteProfile()">Delete</button>
+    </div>
+  </div>
+
+  <div id="log-composer" class="log-composer" style="display:none;">
+    <textarea id="log-text" class="log-textarea" placeholder="Log what they did..." rows="3"></textarea>
+    <div class="composer-footer">
+      <div class="star-picker-row">
+        <input type="hidden" id="star-value" value="3" /><div id="star-picker" class="star-picker"></div>
+        <span id="star-label-text" class="star-label-text"></span>
+      </div>
+      <div class="composer-bottom">
+        <div class="star-hints">
+          <span class="hint-green">1–3 good</span>
+          <span class="hint-red">4–6 bad</span>
+        </div>
+        <button class="btn-red" id="log-btn" onclick="postLog()">Log it</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="logs-list"></div>
+  <div id="no-logs" style="display:none;" class="empty-state">
+    <p style="color:#333;font-size:14px;">No logs yet. Start the receipts.</p>
+  </div>
+</div>
+
+<div id="delete-modal" class="modal-overlay" style="display:none;" onclick="closeDeleteModal(event)">
+  <div class="modal" style="max-width:360px;text-align:center;">
+    <p id="delete-modal-title" style="font-size:16px;font-weight:500;color:#fff;"></p>
+    <p style="font-size:13px;color:#555;margin-top:8px;">All logs will be deleted. This cannot be undone.</p>
+    <div style="display:flex;gap:10px;margin-top:24px;">
+      <button class="btn-ghost full-width" onclick="closeDeleteModalDirect()">Cancel</button>
+      <button class="btn-red full-width" id="confirm-delete-btn">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://sijewknvckgknutyndsr.supabase.co'
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNpamV3a252Y2tna251dHluZHNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3MzkxMjUsImV4cCI6MjA5NzMxNTEyNX0.VIq7MM41p7xO27gM9IzNlV8P8oIcC7NZ99_P5fbMNi0'
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+
+  const params = new URLSearchParams(location.search)
+  const profileId = params.get('id')
+  let currentProfile = null
+  let currentLogs = []
+  window.selectStar = function(n) {
+    document.getElementById('star-value').value = n
+    renderStarPicker()
+  }
+
+  function starLabel(val) {
+    if (val <= 1) return { text: 'Pure motivation', color: '#22c55e' }
+    if (val <= 2) return { text: 'Good energy', color: '#22c55e' }
+    if (val <= 3) return { text: 'Slightly good', color: '#86efac' }
+    if (val <= 4) return { text: 'Slightly bad', color: '#fca5a5' }
+    if (val <= 5) return { text: 'Pissed off', color: '#e02020' }
+    return { text: 'Pure rage', color: '#e02020' }
+  }
+
+  function renderStarPicker() {
+    const val = parseInt(document.getElementById('star-value').value)
+    let html = ''
+    for (let i = 1; i <= 6; i++) {
+      const color = i <= val ? (i <= 3 ? '#22c55e' : '#e02020') : '#2a2a2a'
+      const margin = i === 4 ? 'margin-left:6px;' : ''
+      html += `<span onclick="selectStar(${i})" style="font-size:22px;color:${color};cursor:pointer;user-select:none;${margin}">&#9733;</span>`
+    }
+    document.getElementById('star-picker').innerHTML = html
+    const lbl = starLabel(val)
+    document.getElementById('star-label-text').textContent = lbl.text
+    document.getElementById('star-label-text').style.color = lbl.color
+  }
+
+  function starsHTML(value, size = 13) {
+    let html = ''
+    for (let i = 1; i <= 6; i++) {
+      const filled = i <= value
+      const color = !filled ? '#2a2a2a' : (i <= 3 ? '#22c55e' : '#e02020')
+      const margin = i === 4 ? 'margin-left:5px;' : ''
+      html += `<span style="font-size:${size}px;color:${color};${margin}">★</span>`
+    }
+    return html
+  }
+
+  function avatarHTML(photoUrl, name, size) {
+    const initials = name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '?'
+    const el = document.getElementById('avatar-display')
+    el.className = 'avatar'
+    el.style.width = size + 'px'
+    el.style.height = size + 'px'
+    el.style.fontSize = Math.round(size * 0.32) + 'px'
+    if (photoUrl) {
+      el.style.backgroundImage = `url(${photoUrl})`
+      el.style.backgroundSize = 'cover'
+      el.style.backgroundPosition = 'center'
+      el.textContent = ''
+    } else {
+      el.style.backgroundImage = ''
+      el.textContent = initials
+    }
+  }
+
+  function formatDate(iso) {
+    const d = new Date(iso)
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
+      ' · ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  }
+
+  function updateAvgRow() {
+    const avgRow = document.getElementById('profile-avg-row')
+    if (currentLogs.length === 0) { avgRow.style.display = 'none'; return }
+    const avg = currentLogs.reduce((s, l) => s + l.stars, 0) / currentLogs.length
+    const lbl = starLabel(avg)
+    let starsHtml = ''
+    for (let i = 1; i <= 6; i++) {
+      const filled = i <= Math.round(avg)
+      const color = !filled ? '#2a2a2a' : (i <= 3 ? '#22c55e' : '#e02020')
+      const margin = i === 4 ? 'margin-left:5px;' : ''
+      starsHtml += `<span style="font-size:14px;color:${color};${margin}">★</span>`
+    }
+    avgRow.innerHTML = `<div>${starsHtml}</div><span style="font-size:13px;color:${lbl.color};margin-left:8px;">${lbl.text}</span><span style="font-size:13px;color:#444;margin-left:6px;">· ${avg.toFixed(1)} avg · ${currentLogs.length} log${currentLogs.length !== 1 ? 's' : ''}</span>`
+    avgRow.style.display = 'flex'
+  }
+
+  function renderLogs() {
+    if (currentLogs.length === 0) {
+      document.getElementById('no-logs').style.display = 'block'
+      document.getElementById('logs-list').innerHTML = ''
+      return
+    }
+    document.getElementById('no-logs').style.display = 'none'
+    let html = ''
+    currentLogs.forEach(log => {
+      const lbl = starLabel(log.stars)
+      html += `
+        <div class="log-card">
+          <div class="log-top">
+            <p class="log-content">${log.content}</p>
+            <button class="log-delete-btn" onmouseenter="this.style.color='#e02020'" onmouseleave="this.style.color='#2a2a2a'" onclick="deleteLog('${log.id}')">×</button>
+          </div>
+          <div class="log-meta">
+            <div>${starsHTML(log.stars, 13)}</div>
+            <span style="font-size:12px;color:${lbl.color};margin-left:8px;">${lbl.text}</span>
+            <span style="font-size:12px;color:#333;margin-left:6px;">· ${formatDate(log.created_at)}</span>
+          </div>
+        </div>`
+    })
+    document.getElementById('logs-list').innerHTML = html
+  }
+
+  async function loadPage() {
+    if (!profileId) { location.href = 'index.html'; return }
+
+    const { data: p } = await sb.from('profiles').select('*').eq('id', profileId).single()
+    if (!p) { location.href = 'index.html'; return }
+    currentProfile = p
+
+    document.title = `${p.name} — My Hitlist`
+    document.getElementById('profile-name-display').textContent = p.name
+    const descEl = document.getElementById('profile-desc-display')
+    if (p.description) { descEl.textContent = p.description; descEl.style.display = 'block' } else { descEl.style.display = 'none' }
+    avatarHTML(p.photo_url, p.name, 72)
+    document.getElementById('profile-header').style.display = 'block'
+    document.getElementById('log-composer').style.display = 'block'
+
+    const { data: logs } = await sb.from('logs').select('*').eq('profile_id', profileId).order('created_at', { ascending: false })
+    currentLogs = logs || []
+
+    updateAvgRow()
+    renderLogs()
+    renderStarPicker()
+  }
+
+  async function postLog() {
+    const text = document.getElementById('log-text').value.trim()
+    if (!text) return
+    const btn = document.getElementById('log-btn')
+    btn.textContent = 'Logging...'
+    btn.disabled = true
+
+    const stars = parseInt(document.getElementById('star-value').value)
+    const { data, error } = await sb.from('logs').insert({ profile_id: profileId, content: text, stars: stars }).select().single()
+    if (!error) {
+      currentLogs.unshift(data)
+      document.getElementById('log-text').value = ''
+      document.getElementById('star-value').value = 3
+      renderStarPicker()
+      updateAvgRow()
+      renderLogs()
+    }
+    btn.textContent = 'Log it'
+    btn.disabled = false
+  }
+
+  async function deleteLog(logId) {
+    await sb.from('logs').delete().eq('id', logId)
+    currentLogs = currentLogs.filter(l => l.id !== logId)
+    updateAvgRow()
+    renderLogs()
+  }
+
+  async function uploadPhoto(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    const ext = file.name.split('.').pop()
+    const filename = `${profileId}-${Date.now()}.${ext}`
+    await sb.storage.from('avatars').upload(filename, file, { upsert: true })
+    const { data: urlData } = sb.storage.from('avatars').getPublicUrl(filename)
+    await sb.from('profiles').update({ photo_url: urlData.publicUrl }).eq('id', profileId)
+    currentProfile.photo_url = urlData.publicUrl
+    avatarHTML(urlData.publicUrl, currentProfile.name, 72)
+  }
+
+  function confirmDeleteProfile() {
+    document.getElementById('delete-modal-title').textContent = `Remove ${currentProfile.name}?`
+    document.getElementById('confirm-delete-btn').onclick = async () => {
+      await sb.from('profiles').delete().eq('id', profileId)
+      location.href = 'index.html'
+    }
+    document.getElementById('delete-modal').style.display = 'flex'
+  }
+
+  function closeDeleteModal(e) {
+    if (e.target === document.getElementById('delete-modal')) closeDeleteModalDirect()
+  }
+
+  function closeDeleteModalDirect() {
+    document.getElementById('delete-modal').style.display = 'none'
+  }
+
+  loadPage()
+</script>
+</body>
+</html>
